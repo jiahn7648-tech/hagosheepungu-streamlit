@@ -1,156 +1,126 @@
 import streamlit as st
-import pymunk
-import matplotlib.pyplot as plt
-import numpy as np
-import time 
+from streamlit_p5 import p5
 
-# 상수 설정
-DT = 1/60.0  # 물리 시간 간격 (60 FPS)
-FRAME_COUNT = 300 # 전체 애니메이션 프레임 수 (약 5초)
-BALL_RADIUS = 10
-WIDTH = 500
-HEIGHT = 500
-
-# --- Pymunk 초기화 (앱 시작 시 한 번만 실행) ---
-def initialize_physics():
-    space = pymunk.Space()
-    space.gravity = (0, 0)
-    st.session_state.space = space
-    st.session_state.balls = []
-    
-    # 경계 벽 추가 (화면 밖으로 나가지 않도록)
-    add_boundaries(space, WIDTH, HEIGHT)
-
-def create_ball(position, radius=BALL_RADIUS, mass=1, elasticity=0.9):
-    # 강체 (Body): 물리적 속성
-    moment = pymunk.moment_for_circle(mass, 0, radius)
-    body = pymunk.Body(mass, moment)
-    body.position = position
-
-    # 모양 (Shape): 충돌 감지 영역
-    shape = pymunk.Circle(body, radius)
-    shape.elasticity = elasticity
-    shape.density = 1
-
-    st.session_state.space.add(body, shape)
-    return body
-
-def setup_balls(num_balls):
-    # 매번 새로운 시뮬레이션을 위해 초기화
-    initialize_physics() 
-    
-    balls = []
-    for i in range(num_balls):
-        # 공을 중앙 가로선에 일렬로 배치
-        pos = (i * (2*BALL_RADIUS + 5) + 50, HEIGHT / 2) 
-        ball = create_ball(pos)
-        balls.append(ball)
-    st.session_state.balls = balls
-
-def add_boundaries(space, width, height):
-    static_body = space.static_body
-    
-    # 4면의 벽 세그먼트
-    walls = [
-        pymunk.Segment(static_body, (0, 0), (width, 0), 1),      # 아래
-        pymunk.Segment(static_body, (0, 0), (0, height), 1),    # 왼쪽
-        pymunk.Segment(static_body, (width, 0), (width, height), 1),  # 오른쪽
-        pymunk.Segment(static_body, (0, height), (width, height), 1), # 위
-    ]
-    
-    for wall in walls:
-        wall.elasticity = 0.95 # 벽에 부딪히면 튕기기
-        space.add(wall)
-
-# --- 시뮬레이션 한 프레임 실행 및 그리기 ---
-def simulate_and_draw(frame_counter):
-    space = st.session_state.space
-    balls = st.session_state.balls
-    
-    # 첫 프레임(0)에서만 공에 충격(임펄스)을 가함
-    if frame_counter == 0 and not st.session_state.initial_hit_applied:
-        hit_index = st.session_state.hit_ball_index
-        if hit_index < len(balls):
-            ball_to_hit = balls[hit_index]
-            # 오른쪽으로 강한 충격량 적용 (움직임을 시작)
-            ball_to_hit.apply_impulse_at_local_point((10000, 0), (0, 0)) 
-            st.session_state.initial_hit_applied = True
-    
-    # 물리 스텝 진행
-    space.step(DT)
-    
-    # 시각화 (Matplotlib)
-    fig, ax = plt.subplots(figsize=(6, 6))
-    ax.set_xlim(0, WIDTH)
-    ax.set_ylim(0, HEIGHT)
-    ax.set_aspect('equal')
-    ax.set_title(f"충돌 시뮬레이션 (프레임: {frame_counter})")
-
-    for i, body in enumerate(balls):
-        x, y = body.position
-        
-        # 공 그리기 (충격 받은 공은 빨간색으로 표시)
-        color = 'red' if i == st.session_state.hit_ball_index else 'blue'
-        circle = plt.Circle((x, y), BALL_RADIUS, color=color, fill=True)
-        ax.add_artist(circle)
-        
-    return fig
-
-# --- Streamlit UI 구성 ---
-
-st.title("🎱 드래그 및 충돌 물리 시뮬레이션")
+# Streamlit UI 설정
+st.title("🍎 현실적인 2D 물리 엔진 시뮬레이션 (Matter.js & p5.js)")
+st.markdown("---")
+st.subheader("💡 사용 방법")
+st.markdown("""
+1.  **공 놓기:** 화면 아무 곳이나 **마우스 왼쪽 버튼**을 클릭하면 공이 생성됩니다.
+2.  **드래그:** 생성된 공을 **왼쪽 버튼**으로 클릭한 상태로 움직여서 위치를 옮길 수 있습니다.
+3.  **중력:** 공을 놓으면 아래로 떨어집니다. (기본 설정)
+4.  **충돌:** 공들이 서로 부딪히면 현실처럼 튕겨 나갑니다.
+""")
 st.markdown("---")
 
-# 세션 상태 초기화
-if 'simulation_ready' not in st.session_state:
-    st.session_state.simulation_ready = False
-    st.session_state.initial_hit_applied = False
-    st.session_state.num_balls = 5
-    st.session_state.hit_ball_index = 0
-    initialize_physics()
+# P5.js 코드를 담을 문자열 변수
+# 이 Javascript 코드가 물리 엔진 역할을 합니다.
+p5_code = f"""
+const {st.session_state.get('num_balls', 5)} = 5; // Streamlit에서 변수 가져오기 (선택 사항)
 
+// Matter.js 모듈 변수
+let Engine = Matter.Engine,
+    Render = Matter.Render,
+    Runner = Matter.Runner,
+    Bodies = Matter.Bodies,
+    Composite = Matter.Composite,
+    MouseConstraint = Matter.MouseConstraint,
+    Mouse = Matter.Mouse,
+    World = Matter.World;
 
-col1, col2 = st.columns(2)
-with col1:
-    st.session_state.num_balls = st.slider("공의 개수", 2, 10, st.session_state.num_balls, key='num_slider')
-with col2:
-    st.session_state.hit_ball_index = st.number_input(
-        "충격을 가할 공 번호 (0부터 시작)", 
-        0, 
-        st.session_state.num_balls - 1 if st.session_state.num_balls > 0 else 0, 
-        st.session_state.hit_ball_index,
-        key='hit_slider'
-    )
+let engine;
+let world;
+let boxes = [];
+let ground;
+let mConstraint; // 마우스 제약 (드래그 기능)
 
-if st.button("시뮬레이션 시작"):
-    # 설정에 따라 공들을 다시 배치
-    setup_balls(st.session_state.num_balls)
-    st.session_state.simulation_ready = True
-    st.session_state.initial_hit_applied = False
+function setup() {{
+    // 캔버스 크기 설정 (Streamlit 창에 맞춰서)
+    createCanvas(600, 400); 
+
+    // 1. 엔진 생성 및 중력 설정
+    engine = Engine.create();
+    world = engine.world;
+    world.gravity.y = 1; // 중력 활성화 (아래로 떨어짐)
+
+    // 2. 바닥 (벽) 생성 (충돌체)
+    // isStatic: 움직이지 않는 벽
+    ground = Bodies.rectangle(width / 2, height - 10, width, 20, {{ isStatic: true }});
+    World.add(world, ground);
     
-st.markdown("---")
+    // 3. 마우스 드래그 기능 추가 (MouseConstraint)
+    let canvasmouse = Mouse.create(canvas.elt);
+    canvasmouse.pixelRatio = pixelDensity(); // 고해상도 처리
+    let options = {{
+        mouse: canvasmouse
+    }}
+    // 마우스와 물리 세계를 연결하여 드래그 가능하게 함
+    mConstraint = MouseConstraint.create(engine, options);
+    World.add(world, mConstraint);
 
-if st.session_state.simulation_ready:
+    // 4. 러너 (물리 업데이트) 시작
+    Runner.run(Runner.create(), engine);
+}}
+
+function mouseClicked() {{
+    // 마우스 클릭 시 공 생성 (드래그가 아닌 단순 클릭인 경우에만)
+    if (!mConstraint.body) {{
+        // Bodies.circle(x, y, radius, [options])
+        let newBall = Bodies.circle(mouseX, mouseY, 15, {{
+            restitution: 0.8, // 반발력 (탄성)
+            friction: 0.001,  // 마찰
+            density: 0.01     // 밀도
+        }});
+        World.add(world, newBall);
+    }}
+}}
+
+function draw() {{
+    background(220); // 배경색
+
+    // 1. 물리 엔진 업데이트 (setup에서 이미 Runner가 처리)
     
-    # 애니메이션이 표시될 영역
-    placeholder = st.empty()
+    // 2. 모든 객체 그리기
     
-    # 프레임 수만큼 반복하며 움직임 표시
-    for frame in range(FRAME_COUNT):
-        # 1. 현재 프레임의 물리 계산 및 그림 생성
-        fig = simulate_and_draw(frame)
+    // 바닥 그리기
+    fill(100);
+    rectMode(CENTER);
+    rect(ground.position.x, ground.position.y, width, 20);
+
+    // 공 그리기
+    let bodies = Composite.allBodies(world);
+
+    for (let i = 0; i < bodies.length; i++) {{
+        let body = bodies[i];
         
-        # 2. 그림 표시 (이전 그림을 덮어씀)
-        with placeholder:
-            st.pyplot(fig)
-            plt.close(fig) # 메모리 누수 방지를 위해 그림 닫기
-            
-        # 3. 프레임 간격만큼 대기 (애니메이션 속도 조절)
-        time.sleep(DT)
+        // 정적 오브젝트(바닥)는 그리지 않음
+        if (body.isStatic) continue; 
+
+        let pos = body.position;
+        let angle = body.angle;
         
-    # 최종 상태 표시
-    st.success("충돌 시뮬레이션이 완료되었습니다.")
-    st.session_state.simulation_ready = False # 시뮬레이션 상태 초기화
+        push(); // 현재 변환 상태 저장
+        translate(pos.x, pos.y);
+        rotate(angle);
+        
+        fill(255, 0, 100); // 분홍색 공
+        ellipse(0, 0, body.circleRadius * 2); // 원 그리기
+        
+        pop(); // 저장된 변환 상태 복원
+    }}
     
-else:
-    st.info("공의 개수와 충격을 가할 공을 선택하고 '시뮬레이션 시작' 버튼을 눌러주세요.")
+    // 마우스 드래그 연결선 그리기 (Matter.js 마우스 제약 시각화)
+    if (mConstraint.body) {{
+        let pos = mConstraint.body.position;
+        let offset = mConstraint.constraint.pointB;
+        let m = mConstraint.mouse.position;
+        
+        stroke(0, 255, 0); // 초록색 선
+        line(pos.x + offset.x, pos.y + offset.y, m.x, m.y);
+    }}
+}}
+"""
+
+# P5.js 컴포넌트 호출
+# 컴포넌트가 Javascript 코드를 실행하고 그 결과를 Streamlit에 표시합니다.
+p5(p5_code, width=600, height=400)
